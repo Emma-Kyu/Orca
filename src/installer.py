@@ -6,6 +6,15 @@ from pathlib import Path
 
 def run(cmd, cwd=None):
 	print(f"> {' '.join(cmd)}")
+
+	# robocopy uses non-zero exit codes to signal "success with changes".
+	# 0-7 are success states; 8+ indicates failure.
+	if len(cmd) > 0 and str(cmd[0]).lower() == "robocopy":
+		result = subprocess.run(cmd, cwd=str(cwd) if cwd else None)
+		if result.returncode >= 8:
+			raise subprocess.CalledProcessError(result.returncode, cmd)
+		return
+
 	subprocess.check_call(cmd, cwd=str(cwd) if cwd else None)
 
 def write_env(project_root: Path, orca_root: Path):
