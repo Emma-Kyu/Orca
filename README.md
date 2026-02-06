@@ -31,7 +31,7 @@ This will:
 * generate a `.env` file in your project root with sane defaults
 This step can take a while and **requires internet access** the first time.
 ---
-# ▶️ Running Orca with a config
+# Running Orca with a config
 Orca is driven entirely by **YAML configs**.
 The executable does not hardcode behavior.
 ## Example config template
@@ -70,10 +70,8 @@ These look like:
 ```
 Clients can define their own replacements, and Orca provides several built-ins.
 ## Built-in replacements
-* `<date>`
-  replaced with the current date in `YYYY-MM-DD` format
-* `<time>`
-  replaced with the current time in `HH:MM AM/PM` format
-* `<functions>`
-  replaced with any functions registered by connected clients
+* `<date>` replaced with the current date in `YYYY-MM-DD` format
+* `<time>` replaced with the current time in `HH:MM AM/PM` format
+* `<functions>` replaced with any functions registered by connected clients
+
 This allows your prompt to stay static while Orca injects dynamic context at runtime.
