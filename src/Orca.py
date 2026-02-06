@@ -2,11 +2,14 @@ import yaml
 import asyncio
 import argparse
 import os
-from pathlib import Path
 
+from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
-from utils.LLM import LLMClient, LLMClientConfig
+from utils.LLM import LLMClient, LLMClientConfig, LLMHyperparameters
+from utils.STT import STTClient, STTClientConfig, STTHyperparameters
+# from utils.TTS import TTSClient, TTSClientConfig, TTSHyperparameters
 
 class Orca:
 	def __init__(self, config: dict | str):
@@ -18,6 +21,13 @@ class Orca:
 
 		# subprocesses
 		self.llm = None
+		self.stt = None
+
+		self.system_prompt_replacements = {
+			"<date>": datetime.today().strftime("%Y-%m-%d"),
+			"<time>": datetime.now().strftime("%I:%M %p"),
+			# "<functions>": utils.format_functions(self.function_registry.get_all_functions())
+		}
 
 		self._shutdown_evt = asyncio.Event()
 
@@ -31,11 +41,6 @@ class Orca:
 			await self.stop()
 
 	async def start(self):
-		print(Path.cwd())
-
-		script_dir = Path(__file__).parent.resolve()
-		print(Path(__file__).parent.resolve())
-
 		self.llm = LLMClient(LLMClientConfig(
 			backend_location=Path(__file__).parent.parent / os.getenv("LLAMA_BACKEND"),
 			host=os.getenv("HOST_ADDRESS"),
@@ -46,8 +51,23 @@ class Orca:
 			log_dir=os.getenv("SUBPROCESS_LOG_DIR")
 		))
 
+		self.stt = STTClient(STTClientConfig(
+			backend_location=Path(__file__).parent.parent / os.getenv("WHISPER_BACKEND"),
+			host=os.getenv("HOST_ADDRESS"),
+			port=os.getenv("STT_PORT"),
+			model=self.config["stt"]["model_path"],
+			vad=self.config["stt"]["vad_path"],
+			log_dir=os.getenv("SUBPROCESS_LOG_DIR")
+		))
+
 	async def stop(self):
 		self._shutdown_evt.set()
+
+		for p in (self.llm, self.stt):
+			try:
+				p.close()
+			except Exception:
+				pass
 
 def main():
 	# Get config data
