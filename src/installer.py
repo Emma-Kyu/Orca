@@ -25,8 +25,7 @@ def write_env(project_root: Path, orca_root: Path):
 		"",
 		"# Log directories",
 		f"SUBPROCESS_LOG_DIR={logs_dir}",
-		"",
-	]) + "\n"
+	])
 
 	(project_root / ".env").write_text(env_text, encoding="utf-8")
 	logs_dir.mkdir(parents=True, exist_ok=True)
