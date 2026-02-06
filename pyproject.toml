@@ -4,7 +4,9 @@ version = "0.1.0"
 dependencies = [
   "PyYAML",
   "requests",
+  "python-dotenv"
 ]
 
 [project.scripts]
 orca-install = "installer:main"
+Orca = "Orca:main"
