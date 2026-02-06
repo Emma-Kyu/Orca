@@ -49,7 +49,7 @@ def main():
 
 	project_root = Path(args.project_root).resolve()
 
-	orca_root = Path(__file__).resolve().parents[2]  # src/orca_installer/cli.py -> Orca/
+	orca_root = orca_root = Path(__file__).resolve().parents[1]  # src/orca_installer/cli.py -> Orca/
 	ensure_vendor_dirs(orca_root)
 	write_env(project_root, orca_root)
 
