@@ -1,0 +1,10 @@
+[project]
+name = "Orca"
+version = "0.1.0"
+dependencies = [
+  "PyYAML",
+  "requests",
+]
+
+[project.scripts]
+orca-install = "installer:main"
