@@ -11,6 +11,9 @@ from utils.LLM import LLMClient, LLMClientConfig, LLMHyperparameters
 from utils.STT import STTClient, STTClientConfig, STTHyperparameters
 # from utils.TTS import TTSClient, TTSClientConfig, TTSHyperparameters
 
+from utils.Context import Context
+from utils.EventBus import EventBus, EventBusConfig
+
 class Orca:
 	def __init__(self, config: dict | str):
 		if isinstance(config, dict):
@@ -28,6 +31,11 @@ class Orca:
 			"<time>": datetime.now().strftime("%I:%M %p"),
 			# "<functions>": utils.format_functions(self.function_registry.get_all_functions())
 		}
+		self.context = Context(self.config["chat"]["system_prompt"], self.system_prompt_replacements)
+
+		self.event_bus = EventBus(EventBusConfig(
+			user_data=self
+		))
 
 		self._shutdown_evt = asyncio.Event()
 
@@ -60,6 +68,8 @@ class Orca:
 			log_dir=os.getenv("SUBPROCESS_LOG_DIR")
 		))
 
+		asyncio.create_task(self.event_loop())
+
 	async def stop(self):
 		self._shutdown_evt.set()
 
@@ -68,6 +78,10 @@ class Orca:
 				p.close()
 			except Exception:
 				pass
+
+	async def event_loop(self):
+		while not self._shutdown_evt.is_set():
+			await self.event_bus.process_queue();
 
 def main():
 	# Get config data
