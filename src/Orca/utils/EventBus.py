@@ -13,10 +13,22 @@ class Event(ABC):
 class EventBusConfig:
 	user_data: object | None = None
 
+@dataclass
+class _StopEvent(Event):
+	async def process(self, user_data):
+		return
+
 class EventBus:
 	def __init__(self, config: EventBusConfig):
 		self.event_queue = asyncio.Queue()
 		self.user_data = config.user_data
+
+	def push_event(self, event: Event):
+		self.event_queue.put_nowait(event)
+
+	def stop(self):
+		# Unblock any pending queue.get() so loops can exit promptly
+		self.push_event(_StopEvent())
 
 	async def process_queue(self):
 		event: Event = await self.event_queue.get()

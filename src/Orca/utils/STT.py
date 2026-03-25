@@ -6,7 +6,7 @@ from .start_subprocess import start_subprocess
 
 @dataclass
 class STTHyperparameters:
-	beam_size: int = 5
+	beam_size: int = 2
 	prompt: str = ""
 	suppress_non_speech: bool = False
 	temperature: float = 0.0
@@ -16,7 +16,7 @@ class STTHyperparameters:
 	def from_dict(cls, config: dict):
 		hp = config.get("hyperparameters", {})
 		return cls(
-			beam_size = hp.get("beam_size", 5),
+			beam_size = hp.get("beam_size", 2),
 			prompt = config.get("prompt", ""),
 		)
 

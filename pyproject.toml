@@ -1,12 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "Orca"
 version = "0.1.0"
 dependencies = [
   "PyYAML",
   "requests",
-  "python-dotenv"
+  "python-dotenv",
+  "aiohttp_cors",
+  "websockets",
+  "pydantic",
+  "numpy",
+  "kokoro @ git+https://github.com/Joshua-Usi/kokoro.git@main"
 ]
 
 [project.scripts]
 orca-install = "installer:main"
-Orca = "Orca:main"
+Orca = "Orca.core:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

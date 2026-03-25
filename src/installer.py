@@ -19,13 +19,15 @@ def run(cmd, cwd=None):
 
 def write_env(project_root: Path, orca_root: Path):
 	vendor_bin = (orca_root / "vendor" / "bin").resolve()
-	logs_dir = (project_root / "logs" / "subprocesses").resolve()
+	logs_dir = project_root / "logs" / "subprocesses"
+	conversation_dir = project_root / "logs" / "conversations"
 
 	env_text = "\n".join([
 		"# Hosting addresses",
 		"HOST_ADDRESS=127.0.0.1",
 		"",
 		"# Connectivity",
+		"HTTP_PORT=49169",
 		"WEBSOCKET_PORT=49170",
 		"",
 		"# Internal connectivity",
@@ -34,10 +36,13 @@ def write_env(project_root: Path, orca_root: Path):
 		"",
 		"# Log directories",
 		f"SUBPROCESS_LOG_DIR={logs_dir}",
+		f"CONVERSATION_LOG_DIR={conversation_dir}",
 	])
 
 	(project_root / ".env").write_text(env_text, encoding="utf-8")
+
 	logs_dir.mkdir(parents=True, exist_ok=True)
+	conversation_dir.mkdir(parents=True, exist_ok=True)
 
 def ensure_vendor_dirs(orca_root: Path):
 	(orca_root / "vendor" / "bin").mkdir(parents=True, exist_ok=True)
@@ -49,7 +54,9 @@ def main():
 
 	project_root = Path(args.project_root).resolve()
 
-	orca_root = orca_root = Path(__file__).resolve().parents[1]  # src/orca_installer/cli.py -> Orca/
+	import Orca
+	orca_root = Path(Orca.__file__).resolve().parents[2]
+	
 	ensure_vendor_dirs(orca_root)
 	write_env(project_root, orca_root)
 
@@ -60,6 +67,10 @@ def main():
 	llama_dir = vendor_dir / "llama.cpp"
 	if not llama_dir.exists():
 		run(["git", "clone", "https://github.com/ggml-org/llama.cpp.git"], cwd=vendor_dir)
+	else:
+		run(["git", "fetch", "--prune", "origin"], cwd=llama_dir)
+		run(["git", "checkout", "master"], cwd=llama_dir)
+		run(["git", "pull", "--ff-only"], cwd=llama_dir)
 
 	run([
 		"cmake", "-B", "build",

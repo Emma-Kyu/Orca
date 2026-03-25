@@ -1,5 +1,6 @@
 import requests
 import json
+from pathlib import Path
 
 from dataclasses import dataclass, field
 from typing import Iterator
@@ -45,8 +46,9 @@ class LLMHyperparameters:
 	def from_dict(cls, params: dict):
 		return cls(**params)
 
-	def to_payload(self, messages: list[dict]) -> dict:
+	def to_payload(self, messages: list[dict], model: str) -> dict:
 		return {
+			"model": model,
 			"messages": messages,
 
 			"temperature": self.temperature,
@@ -61,10 +63,9 @@ class LLMHyperparameters:
 			"repeat_penalty": self.repetition_penalty,
 			"repeat_last_n": self.repeat_last_n,
 
-			"id_slot": 0,
 			"cache_prompt": True,
 			"stream": True,
-			"n_predict": self.n_predict,
+			"max_tokens": self.n_predict,
 			"seed": self.seed,
 			"logit_bias": self.logit_bias,
 			"samplers": self.samplers,
@@ -85,7 +86,7 @@ class LLMClientConfig:
 	# Connectivity
 	host: str = "127.0.0.1"
 	port: int = 8000
-	endpoint: str = "/chat/completions" # LLama.cpp default
+	endpoint: str = "/v1/chat/completions"
 
 	# Data
 	model: str = "UnnamedLLM.gguf"
@@ -97,7 +98,9 @@ class LLMClientConfig:
 class LLMClient:
 	def __init__(self, config: LLMClientConfig):
 		self.endpoint = f"http://{config.host}:{config.port}{config.endpoint}"
+		self.model_name = config.alias
 		self.session = requests.Session()
+		self.log_dir = Path(config.log_dir)
 
 		cmd = [
 			f"{config.backend_location}\\llama-server",
@@ -107,18 +110,30 @@ class LLMClient:
 			# Connectivity
 			"--host", config.host, "--port", str(config.port),
 			"-m", config.model, "-c", str(config.context_length), "--alias", config.alias,
-			"--no-prefill-assistant"
+			"--no-prefill-assistant", "--verbose-prompt", "--fit", "off"
 		]
 		# TODO does python have destructors?
 		self.process = start_subprocess(cmd, config.log_dir)
 		print(f"LLM server running at: {self.endpoint}")
 
 	def close(self):
+		# pass
 		self.process.terminate()
 		self.process.wait()
 
 	def send_generation_request(self, messages: list[dict], hyperparameters: LLMHyperparameters) -> requests.Response:
-		response = self.session.post(self.endpoint, json = hyperparameters.to_payload(messages), stream = True)
+		payload = hyperparameters.to_payload(messages, self.model_name)
+
+		try:
+			self.log_dir.mkdir(parents=True, exist_ok=True)
+			(self.log_dir / "last_llm_payload.json").write_text(
+				json.dumps(payload, indent=2, ensure_ascii=False),
+				encoding="utf-8"
+			)
+		except Exception as e:
+			print(f"[llm payload dump failed] {e}")
+
+		response = self.session.post(self.endpoint, json=payload, stream=True)
 		return response
 
 	def get_streaming_response(self, response: requests.Response) -> Iterator[str]:
@@ -126,7 +141,7 @@ class LLMClient:
 		for line in response.iter_lines():
 			if not line:
 				continue
-			if line == b"[DONE]":
+			if line == b"data: [DONE]" or line == b"[DONE]":
 				break
 			line = line.removeprefix(b"data:").lstrip()
 			# Convert to string

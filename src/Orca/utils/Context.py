@@ -16,7 +16,6 @@ class Context:
 		if self.raw_system_prompt and len(self.messages) >= 1 and self.messages[0]["role"] == "system":
 			self.messages[0]["content"] = _build_prompt(self.raw_system_prompt, replacements)
 
-
 	def add_message(self, role: str, message: str):
 		self.messages.append({"role": role, "content": message})
 

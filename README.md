@@ -75,3 +75,6 @@ Clients can define their own replacements, and Orca provides several built-ins.
 * `<functions>` replaced with any functions registered by connected clients
 
 This allows your prompt to stay static while Orca injects dynamic context at runtime.
+
+## Functions
+Functions follow a python-like syntax
