@@ -41,6 +41,11 @@ class ScriptManager:
 		module = importlib.util.module_from_spec(spec)
 
 		sys.modules[path.stem] = module
+		script_dir = str(path.parent)
+
+		if script_dir not in sys.path:
+			sys.path.insert(0, script_dir)
+
 		spec.loader.exec_module(module)
 
 		return module

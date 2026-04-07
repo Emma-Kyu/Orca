@@ -29,6 +29,8 @@ from .utils.Events import (
 
 from .utils.ScriptManager import ScriptManager
 
+from .utils.start_subprocess import start_subprocess
+
 class Orca:
 	def __init__(self, config: dict | str):
 		if isinstance(config, dict):
@@ -36,6 +38,10 @@ class Orca:
 		elif isinstance(config, str):
 			with open(config, "r") as file:
 				self.config = yaml.safe_load(file.read())
+
+		self.backend_path = Path(__file__).resolve().parents[2] / "vendor" / "bin"
+
+		self.subprocesses = []
 
 		# subprocesses
 		self.llm = None
@@ -177,6 +183,13 @@ class Orca:
 		await self.ws.stop()
 
 		# Close subprocesses
+		for p in self.subprocesses:
+			try:
+				p.terminate()
+			except Exception:
+				pass
+
+		# Close subprocesses
 		for p in (self.llm, self.stt):
 			try:
 				p.close()
@@ -186,6 +199,11 @@ class Orca:
 	async def event_loop(self):
 		while not self._shutdown_evt.is_set():
 			await self.event_bus.process_queue();
+
+	def start_subprocess(self, cmd):
+		p = start_subprocess(cmd, os.getenv("SUBPROCESS_LOG_DIR"))
+		self.subprocesses.append(p)
+		return p
 
 def main():
 	# Get config data
