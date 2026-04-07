@@ -10,7 +10,8 @@ def audio_to_base64(pcm16: np.ndarray) -> str:
 	return base64.b64encode(pcm16.tobytes()).decode()
 
 class StreamOutputHandler:
-	def __init__(self, ws, tts, client_modalities: dict[str, list]):
+	def __init__(self, generation_id, ws, tts, client_modalities: dict[str, list]):
+		self.generation_id = generation_id
 		self.ws = ws
 		self.tts = tts
 		self.buffer = ""
@@ -35,7 +36,7 @@ class StreamOutputHandler:
 			await self._handle_audio(token)
 
 	async def _handle_text(self, token: str):
-		await self.ws.ws.broadcast_json_to(self.text_sockets, { "event": "generation", "token_type": "text", "token": token, "finished": False })
+		await self.ws.ws.broadcast_json_to(self.text_sockets, { "event": "generation", "generation_id": self.generation_id, "token_type": "text", "token": token, "finished": False })
 
 	async def _handle_audio(self, token: str):
 		self.buffer += token
@@ -63,7 +64,7 @@ class StreamOutputHandler:
 			pcm16 = float32_to_pcm16(pcm)
 
 			audio_b64 = await self.loop.run_in_executor(None, audio_to_base64, pcm16)
-			await self.ws.ws.broadcast_json_to(self.audio_sockets, { "event": "generation", "token_type": "audio", "token": audio_b64, "text": text, "finished": False })
+			await self.ws.ws.broadcast_json_to(self.audio_sockets, { "event": "generation", "generation_id": self.generation_id, "token_type": "audio", "token": audio_b64, "text": text, "finished": False })
 
 			# Recording disabled
 			# self.recording_pcm16.append(pcm16)
@@ -83,7 +84,7 @@ class StreamOutputHandler:
 
 	async def send_finish_token(self):
 		if self.text_sockets:
-			await self.ws.ws.broadcast_json_to(self.text_sockets, { "event": "generation", "token_type": "text", "token": "", "finished": True })
+			await self.ws.ws.broadcast_json_to(self.text_sockets, { "event": "generation", "generation_id": self.generation_id, "token_type": "text", "token": "", "finished": True })
 
 		if self.audio_sockets:
-			await self.ws.ws.broadcast_json_to(self.audio_sockets, { "event": "generation", "token_type": "audio", "token": "", "finished": True })
+			await self.ws.ws.broadcast_json_to(self.audio_sockets, { "event": "generation", "generation_id": self.generation_id, "token_type": "audio", "token": "", "finished": True })

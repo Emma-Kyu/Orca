@@ -158,6 +158,8 @@ class ClientMessageEvent(Event):
 
 		if msg.output:
 			user_data.event_bus.push_event(GenerationEvent(metrics))
+		else:
+			user_data.context.push_assistant("<silence>")
 
 # A function return event that needs to be processed
 class FunctionReturnEvent(Event):
@@ -202,7 +204,9 @@ class GenerationEvent(Event):
 
 		self.metrics.start_timer("ttft")
 
-		handler = StreamOutputHandler(user_data.ws, user_data.tts, user_data.client_manager.get_client_modalities())
+		generation_id = f"gid-{uuid.uuid4().hex[:12]}"
+
+		handler = StreamOutputHandler(generation_id, user_data.ws, user_data.tts, user_data.client_manager.get_client_modalities())
 		parser = StreamingDelimiterParser(DELIMITERS)
 
 		response = user_data.llm.send_generation_request(user_data.context.prompt(),
@@ -245,7 +249,6 @@ class GenerationEvent(Event):
 			)
 		)
 
-		generation_id = f"gid-{uuid.uuid4().hex[:12]}"
 		function_ids = set()
 		has_control = False
 
