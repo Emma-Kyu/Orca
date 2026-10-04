@@ -17,6 +17,21 @@ def run(cmd, cwd=None):
 
 	subprocess.check_call(cmd, cwd=str(cwd) if cwd else None)
 
+def ensure_repo(repo_dir: Path, repo_url: str, branch: str):
+	if not repo_dir.exists():
+		run([
+			"git", "clone",
+			"--branch", branch,
+			"--single-branch",
+			repo_url,
+			repo_dir.name,
+		], cwd=repo_dir.parent)
+		return
+
+	run(["git", "fetch", "--prune", "origin"], cwd=repo_dir)
+	run(["git", "checkout", branch], cwd=repo_dir)
+	run(["git", "pull", "--ff-only", "origin", branch], cwd=repo_dir)
+
 def write_env(project_root: Path, orca_root: Path):
 	vendor_bin = (orca_root / "vendor" / "bin").resolve()
 	logs_dir = project_root / "logs" / "subprocesses"
@@ -65,17 +80,16 @@ def main():
 
 	# Clone + build llama.cpp
 	llama_dir = vendor_dir / "llama.cpp"
-	if not llama_dir.exists():
-		run(["git", "clone", "https://github.com/ggml-org/llama.cpp.git"], cwd=vendor_dir)
-	else:
-		run(["git", "fetch", "--prune", "origin"], cwd=llama_dir)
-		run(["git", "checkout", "master"], cwd=llama_dir)
-		run(["git", "pull", "--ff-only"], cwd=llama_dir)
+	ensure_repo(
+		llama_dir,
+		"https://github.com/ggml-org/llama.cpp.git",
+		"master",
+	)
 
 	run([
 		"cmake", "-B", "build",
 		"-DGGML_CUDA=ON",
-		'-DCMAKE_CUDA_ARCHITECTURES=86',
+		"-DCMAKE_CUDA_ARCHITECTURES=86",
 		"-DGGML_CUDA_F16=ON",
 		"-DGGML_CUDA_FORCE_MMQ=ON",
 		"-DGGML_CUDA_PEER_MAX_BATCH_SIZE=1",
@@ -99,19 +113,27 @@ def main():
 
 	# Clone + build whisper.cpp
 	whisper_dir = vendor_dir / "whisper.cpp"
-	if not whisper_dir.exists():
-		run(["git", "clone", "https://github.com/ggml-org/whisper.cpp.git"], cwd=vendor_dir)
+	ensure_repo(
+		whisper_dir,
+		"https://github.com/ggml-org/whisper.cpp.git",
+		"master",
+	)
 
 	# Replace server example with your custom server code
 	server_dir = whisper_dir / "examples" / "server"
-	if server_dir.exists():
+	if server_dir.exists() and not (server_dir / ".git").exists():
 		run(["cmd", "/c", "rmdir", "/s", "/q", "server"], cwd=whisper_dir / "examples")
-	run(["git", "clone", "https://github.com/Emma-Kyu/Whisper-Server-Code.git", "server"], cwd=whisper_dir / "examples")
+
+	ensure_repo(
+		server_dir,
+		"https://github.com/Emma-Kyu/Whisper-Server-Code.git",
+		"main",
+	)
 
 	run([
 		"cmake", "-B", "build",
 		"-DGGML_CUDA=ON",
-		'-DCMAKE_CUDA_ARCHITECTURES=86',
+		"-DCMAKE_CUDA_ARCHITECTURES=86",
 		"-DGGML_CUDA_F16=ON",
 		"-DGGML_CUDA_FORCE_MMQ=ON",
 		"-DGGML_NATIVE=ON",

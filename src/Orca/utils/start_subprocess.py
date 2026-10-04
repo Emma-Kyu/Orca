@@ -2,6 +2,7 @@ import subprocess
 import os
 import threading
 import socket
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -11,10 +12,20 @@ def start_subprocess(cmd, logs_dir: str = "."):
 	Path(logs_dir).mkdir(parents = True, exist_ok = True)
 
 	start_dt = datetime.now()
+	process_id = uuid.uuid4().hex[:6]
+
 	log_path = os.path.join(
 		logs_dir,
-		f"{start_dt.strftime('%Y-%m-%d-%H-%M')}-{_program}.log"
+		f"{start_dt.strftime('%Y-%m-%d-%H-%M')}-{_program}-{process_id}.log"
 	)
+
+	if isinstance(cmd, (list, tuple)):
+		command_str = subprocess.list2cmdline(cmd)
+	else:
+		command_str = str(cmd)
+
+	env = os.environ.copy()
+	env["CUDA_SCALE_LAUNCH_QUEUES"] = "4x"
 
 	p = subprocess.Popen(
 		cmd,
@@ -30,11 +41,15 @@ def start_subprocess(cmd, logs_dir: str = "."):
 
 	def _write_header():
 		log_file.write("-" * 80 + "\n")
+		log_file.write("# Process ID\n")
+		log_file.write(f"{process_id}\n")
 		log_file.write("# Command\n")
-		log_file.write(f"{cmd}\n")
+		log_file.write(f"{command_str}\n")
 		log_file.write("# Start time\n")
 		log_file.write(f"{start_dt.isoformat(sep=' ', timespec='seconds')}\n")
 		log_file.write("-" * 80 + "\n")
+
+	_write_header()
 
 	def _pump_stream(stream, label: str):
 		# Stream line-by-line so logs update live
@@ -96,7 +111,7 @@ def start_subprocess(cmd, logs_dir: str = "."):
 
 		log_file.close()
 
-		print(f"{_program} exited with code {code}")
+		print(f"{_program} [{process_id}] exited with code {code}")
 
 	threading.Thread(target = _wait_and_log, daemon = True).start()
 	return p

@@ -24,7 +24,7 @@ class LLMHyperparameters:
 	dry_multiplier: float = 0.0
 	dry_base: float = 1.75
 	dry_allowed_length: int = 2
-	dry_penalty_last_n: int = -1
+	dry_penalty_last_n: int = 2048
 	dry_sequence_breakers: list[str] = field(
 		default_factory=lambda: ['\n', ':', '"', '*']
 	)
@@ -76,6 +76,8 @@ class LLMHyperparameters:
 			"dry_allowed_length": self.dry_allowed_length,
 			"dry_penalty_last_n": self.dry_penalty_last_n,
 			"dry_sequence_breakers": self.dry_sequence_breakers,
+
+			"reasoning_effort": "none"
 		}
 
 @dataclass
@@ -105,12 +107,11 @@ class LLMClient:
 		cmd = [
 			f"{config.backend_location}\\llama-server",
 			# Optimisations
-			"-b", "2048", "-ub", "512", "-ngl", "255", "-sm", "none", "-fa", "1", "--cache-ram", "0", "-kvu", "-nocb",
-			"-ctk", "q8_0", "-ctv", "q8_0", "--no-mmap", "--threads-http", "1", "--parallel", "1", "--cache-reuse", "128",
+			"-b", "2048", "-ub", "512", "-ngl", "255", "-sm", "none", "-fa", "1", "--cache-ram", "0", "-kvu", "-nocb", "--threads-http", "1", "--parallel", "1", "--cache-reuse", "128",
 			# Connectivity
 			"--host", config.host, "--port", str(config.port),
 			"-m", config.model, "-c", str(config.context_length), "--alias", config.alias,
-			"--no-prefill-assistant", "--verbose-prompt", "--fit", "off"
+			"--no-prefill-assistant", "--fit", "off", "--spec-type", "draft-mtp", "--spec-draft-n-max" , "2"
 		]
 		# TODO does python have destructors?
 		self.process = start_subprocess(cmd, config.log_dir)
@@ -137,7 +138,12 @@ class LLMClient:
 		return response
 
 	def get_streaming_response(self, response: requests.Response) -> Iterator[str]:
+		if not response.ok:
+			print(f"LLM request failed: HTTP {response.status_code}")
+			print(response.text)
+
 		response.raise_for_status()
+
 		for line in response.iter_lines():
 			if not line:
 				continue

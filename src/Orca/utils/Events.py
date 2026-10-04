@@ -79,6 +79,7 @@ class ClientConnectEvent(Event):
 	async def process(self, user_data):
 		client_id = user_data.client_manager.connect(self.payload, self.ws)
 		user_data.function_registry.register_client(self.payload["client"], self.payload["functions"])
+		user_data.event_bus.push_event(RebuildPromptEvent())
 
 		# Send the ack message
 		await user_data.ws.ws.send_json(self.ws, {"event": "connect_ack", "client_id": client_id})
@@ -226,7 +227,7 @@ class GenerationEvent(Event):
 				dry_multiplier=3.0,
 				dry_base=1.75,
 				dry_allowed_length=3,
-				dry_penalty_last_n=-1,
+				dry_penalty_last_n=2048,
 				dry_sequence_breakers=[ '\n', ':', '"', '*', '<', '>', "<silence>", "`" ],
 
 				# Misc
@@ -296,8 +297,8 @@ class GenerationEvent(Event):
 							elif user_data.client_manager.is_client_connected(call["client"]):
 								socket = user_data.client_manager.get_socket(call["client"])
 								if socket:
-									await socket.send_json({
-										"type": "function_call",
+									await user_data.ws.ws.send_json(socket, {
+										"event": "function_call",
 										"function_id": call["function_id"],
 										"client": call["client"],
 										"function": call["function"],

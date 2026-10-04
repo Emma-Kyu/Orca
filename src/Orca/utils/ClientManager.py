@@ -44,7 +44,7 @@ class ClientManager:
 		return None
 
 	def get_socket(self, name: str):
-		client = self.client_sockets.get(name, None)
+		client = self.clients.get(name, None)
 		return client.socket if client else None
 
 	def get_sockets(self) -> list:
