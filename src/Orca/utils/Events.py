@@ -71,6 +71,27 @@ class Schema_FunctionResultEvent(Schema_BaseEvent):
 	function_id: str
 	result: str
 
+class Schema_OpenInputStream(Schema_BaseEvent):
+	event: Literal["open_input_stream"]
+	request_id: str
+	client_id: str
+	input_type: Literal["audio"]
+	username: str | None = None
+	tag: str | None = None
+	output: bool = True
+	sample_rate: int = 16000
+	channels: int = 1
+	format: Literal["pcm_s16le"] = "pcm_s16le"
+	language: str = "en"
+
+class Schema_CloseInputStream(Schema_BaseEvent):
+	event: Literal["close_input_stream"]
+	stream_id: int
+
+class Schema_CancelInputStream(Schema_BaseEvent):
+	event: Literal["cancel_input_stream"]
+	stream_id: int
+
 # Runs on client connection
 class ClientConnectEvent(Event):
 	def __init__(self, ws, payload):
@@ -172,6 +193,26 @@ class ClientAudioMessageEvent(Event):
 				msg.message_str = await asyncio.to_thread(transcribe, hyperparameters, self.audio)
 
 		await process_client_message(user_data, self.ws, msg, metrics)
+
+
+# Runs on a completed turn from a streaming client input
+class ClientStreamMessageEvent(Event):
+	def __init__(self, ws, stream, text: str):
+		self.ws = ws
+
+		self.message = Message({
+			"client_id": stream.client_id,
+			"username": stream.username,
+			"tag": stream.tag,
+			"message": "<streaming-audio>",
+			"input_type": "audio",
+			"output": stream.output
+		})
+		self.message.message_str = text
+
+	async def process(self, user_data):
+		metrics = Metrics()
+		await process_client_message(user_data, self.ws, self.message, metrics)
 
 
 async def process_client_message(user_data, ws, msg, metrics):
@@ -305,6 +346,17 @@ class GenerationEvent(Event):
 						parsed_calls = user_data.function_registry.parse_calls(function_calls)
 
 						for call in parsed_calls:
+							if call.get("error"):
+								function_ids.add(call["function_id"])
+
+								user_data.event_bus.push_event(FunctionReturnEvent({
+									"client": call["client"],
+									"function": "error",
+									"function_id": call["function_id"],
+									"result": call["error"]
+								}))
+								continue
+
 							if not call["async"]:
 								function_ids.add(call["function_id"])
 
@@ -316,7 +368,7 @@ class GenerationEvent(Event):
 								else:
 									result = function_handle(**call["args"])
 
-								if result is CONTROL_FLOW:
+								if result == CONTROL_FLOW:
 									has_control = True
 									continue
 
@@ -382,8 +434,9 @@ class GenerationEvent(Event):
 
 		# inject timeout messages
 		for fid in remaining:
-			user_data.context.push_system(f"{fid}: Function return timed out.")
+			message = f"{fid}: Function return timed out."
+			print(message)
+			user_data.context.push_system(message)
 
 		user_data.barriers.clear_barrier(gid)
-
 		user_data.event_bus.push_event(GenerationEvent(Metrics()))

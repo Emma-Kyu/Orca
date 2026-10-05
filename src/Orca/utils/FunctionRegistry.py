@@ -59,13 +59,29 @@ class FunctionRegistry:
 
 		try:
 			calls = self._func_parser.call(text)
-		except Exception:
+		except Exception as e:
 			# print(f"[WARN] Could not parse: {text}")
-			return []
+			return [{
+				"client": "function",
+				"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+				"function": "error",
+				"args": {},
+				"return": "str",
+				"async": False,
+				"error": f"Invalid function call: {text} ({e})"
+			}]
 
 		if not calls:
 			# print(f"[WARN] No calls found")
-			return []
+			return [{
+				"client": "function",
+				"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+				"function": "error",
+				"args": {},
+				"return": "str",
+				"async": False,
+				"error": f"Invalid function call: {text}"
+			}]
 
 		results: list[dict] = []
 
@@ -73,12 +89,30 @@ class FunctionRegistry:
 			ns = call.get("client")
 			fname = call.get("function")
 			if not ns or not fname:
+				results.append({
+					"client": ns or "function",
+					"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+					"function": "error",
+					"args": {},
+					"return": "str",
+					"async": False,
+					"error": f"Invalid function call: {text}"
+				})
 				continue
 
 			key = f"{ns}:{fname}"
 			spec = self._registry.get(key)
 			if not spec:
 				# print(f"[WARN] Unknown function call: {key}")
+				results.append({
+					"client": ns,
+					"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+					"function": "error",
+					"args": {},
+					"return": "str",
+					"async": False,
+					"error": f"Unknown function call: {key}"
+				})
 				continue
 
 			params = spec.get("params", [])
@@ -86,11 +120,33 @@ class FunctionRegistry:
 
 			if len(values) != len(params):
 				# print(f"[WARN] No such overload exists: {len(values)} arguments but spec wants {len(params)} params")
+				results.append({
+					"client": ns,
+					"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+					"function": "error",
+					"args": {},
+					"return": "str",
+					"async": False,
+					"error": f"Invalid function call: {key} received {len(values)} arguments but expects {len(params)}"
+				})
 				continue
 
 			typed_args: dict[str, object] = {}
-			for (arg_name, arg_type), val in zip(params, values):
-				typed_args[arg_name] = self._coerce_value(val, arg_type)
+
+			try:
+				for (arg_name, arg_type), val in zip(params, values):
+					typed_args[arg_name] = self._coerce_value(val, arg_type)
+			except (TypeError, ValueError) as e:
+				results.append({
+					"client": ns,
+					"function_id": f"fid-{uuid.uuid4().hex[:12]}",
+					"function": "error",
+					"args": {},
+					"return": "str",
+					"async": False,
+					"error": f"Invalid arguments for {key}: {e}"
+				})
+				continue
 
 			results.append({
 				"client": spec["client"],

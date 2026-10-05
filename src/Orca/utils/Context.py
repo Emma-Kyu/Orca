@@ -42,10 +42,10 @@ class Context:
 		""" Get a specific message """
 		return self.messages[index]
 
-	def slice(start: int, end: int) -> list[dict[str, str]]:
+	def slice(self, start: int, end: int) -> list[dict[str, str]]:
 		""" Slice a part of the prompt, while also preserving the system prompt """
 		if start <= 1:
 			start = 1
 		out = [ self.messages[0] ]
-		out.append(self.messages[start:end])
+		out.extend(self.messages[start:end])
 		return out

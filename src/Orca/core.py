@@ -16,16 +16,18 @@ from .utils.AIOApp import AIOApp, AIOAppConfig
 from .utils.Context import Context
 from .utils.EventBus import EventBus, EventBusConfig
 from .utils.WebSocket import WebSocket, WebSocketConfig
-from .utils.AudioPacket import decode_audio_packet
+from .utils.AudioPacket import MESSAGE_AUDIO, MESSAGE_INPUT_STREAM_DATA, decode_audio_packet, decode_input_stream_packet
 
 from .utils.ClientManager import ClientManager
 from .utils.FunctionRegistry import FunctionRegistry
 
 from .utils.BarrierTracker import BarrierTracker
+from .utils.StreamManager import StreamManager
 
 from .utils.Events import (
 	ClientConnectEvent, ClientDisconnectEvent, ClientMessageEvent, ClientAudioMessageEvent, FunctionReturnEvent, RebuildPromptEvent,
-	Schema_ConnectEvent, Schema_DisconnectEvent, Schema_MessageEvent, Schema_FunctionResultEvent
+	Schema_ConnectEvent, Schema_DisconnectEvent, Schema_MessageEvent, Schema_FunctionResultEvent,
+	Schema_OpenInputStream, Schema_CloseInputStream, Schema_CancelInputStream
 )
 
 from .utils.ScriptManager import ScriptManager
@@ -62,6 +64,7 @@ class Orca:
 		self.context = Context(self.config["chat"]["system_prompt"], self.system_prompt_replacements)
 
 		self.client_manager = ClientManager()
+		self.stream_manager = None
 		self.script_manager = ScriptManager(self, self.config.get("scripts", []))
 		self.function_registry = FunctionRegistry()
 		self.barriers = BarrierTracker()
@@ -111,11 +114,19 @@ class Orca:
 			smart_turn = stt_config.get("smart_turn_path", ""),
 			log_dir = subprocess_log_dir
 		))
+
 		self.tts = TTSClient(TTSClientConfig(
-			model_path=tts_config["model_path"],
-			voice_pack=tts_config["voice_pack"],
-			pitch_shift=tts_config["pitch_shift"]
+			backend_location = backend_path / os.getenv("TTS_BACKEND"),
+			host = host,
+			port = int(os.getenv("TTS_PORT")),
+			model_path = tts_config["model_path"],
+			voice_pack = tts_config["voice_pack"],
+			pitch_shift = tts_config["pitch_shift"],
+			log_dir = subprocess_log_dir
 		))
+
+		await self.stt.start()
+		self.stream_manager = StreamManager(self, self.stt)
 
 		self.http = AIOApp(AIOAppConfig(host=host, port=int(os.getenv("HTTP_PORT"))))
 
@@ -124,13 +135,62 @@ class Orca:
 		async def _on_connect(ws, payload):
 			self.event_bus.push_event(ClientConnectEvent(ws, payload))
 		async def _on_disconnect(ws, payload):
+			await self.stream_manager.cancel_socket(ws)
 			self.event_bus.push_event(ClientDisconnectEvent(ws))
 		async def _on_message(ws, payload):
 			self.event_bus.push_event(ClientMessageEvent(ws, payload))
 		async def _on_function_result(ws, payload):
 			self.event_bus.push_event(FunctionReturnEvent(payload))
 
+		async def _on_open_input_stream(ws, payload):
+			try:
+				stream = await self.stream_manager.open_stream(ws, payload)
+			except Exception as exc:
+				await self.ws.ws.send_json(ws, { "event": "error", "request_id": payload.get("request_id"), "reason": str(exc) })
+				return
+
+			await self.ws.ws.send_json(ws, {
+				"event": "input_stream_opened",
+				"request_id": payload["request_id"],
+				"stream_id": stream.stream_id
+			})
+
+		async def _on_close_input_stream(ws, payload):
+			try:
+				await self.stream_manager.close_stream(ws, payload["stream_id"])
+			except ValueError as exc:
+				await self.ws.ws.send_json(ws, { "event": "error", "stream_id": payload["stream_id"], "reason": str(exc) })
+				return
+
+			await self.ws.ws.send_json(ws, { "event": "input_stream_closed", "stream_id": payload["stream_id"] })
+
+		async def _on_cancel_input_stream(ws, payload):
+			try:
+				await self.stream_manager.cancel_stream(ws, payload["stream_id"])
+			except ValueError as exc:
+				await self.ws.ws.send_json(ws, { "event": "error", "stream_id": payload["stream_id"], "reason": str(exc) })
+				return
+
+			await self.ws.ws.send_json(ws, { "event": "input_stream_cancelled", "stream_id": payload["stream_id"] })
+
 		async def _on_binary(ws, data):
+			if not data:
+				return
+
+			message_type = data[0]
+
+			if message_type == MESSAGE_INPUT_STREAM_DATA:
+				try:
+					stream_id, payload = decode_input_stream_packet(data)
+					await self.stream_manager.send_data(ws, stream_id, payload)
+				except ValueError as exc:
+					await self.ws.ws.send_json(ws, { "event": "error", "reason": str(exc) })
+				return
+
+			if message_type != MESSAGE_AUDIO:
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": f"Unknown binary message type: {message_type}" })
+				return
+
 			try:
 				payload, audio = decode_audio_packet(data)
 			except ValueError as exc:
@@ -163,6 +223,9 @@ class Orca:
 		self.ws.add_event("disconnect", _on_disconnect, Schema_DisconnectEvent)
 		self.ws.add_event("message", _on_message, Schema_MessageEvent)
 		self.ws.add_event("function_result", _on_function_result, Schema_FunctionResultEvent)
+		self.ws.add_event("open_input_stream", _on_open_input_stream, Schema_OpenInputStream)
+		self.ws.add_event("close_input_stream", _on_close_input_stream, Schema_CloseInputStream)
+		self.ws.add_event("cancel_input_stream", _on_cancel_input_stream, Schema_CancelInputStream)
 
 		self.ws.register_on_disconnect("disconnect")
 		self.ws.set_binary_handler(_on_binary)
@@ -198,8 +261,12 @@ class Orca:
 				self._event_task = None
 
 		# Turn off connectivity
+		if self.stream_manager is not None:
+			await self.stream_manager.cancel_all()
 		await self.http.stop()
 		await self.ws.stop()
+		if self.stt is not None:
+			await self.stt.aclose()
 
 		# Close subprocesses
 		for p in self.subprocesses:
@@ -209,7 +276,7 @@ class Orca:
 				pass
 
 		# Close subprocesses
-		for p in (self.llm, self.stt):
+		for p in (self.llm, self.stt, self.tts):
 			try:
 				p.close()
 			except Exception:
