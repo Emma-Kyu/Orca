@@ -1,50 +1,48 @@
+import io
+import wave
 import requests
 
 from dataclasses import dataclass
+from pathlib import Path
 
 from .start_subprocess import start_subprocess
 
 @dataclass
 class STTHyperparameters:
-	beam_size: int = 2
-	prompt: str = ""
-	suppress_non_speech: bool = False
-	temperature: float = 0.0
-	vad: bool = True
+	language: str = "en"
 
 	@classmethod
 	def from_dict(cls, config: dict):
 		hp = config.get("hyperparameters", {})
-		return cls(
-			beam_size = hp.get("beam_size", 2),
-			prompt = config.get("prompt", ""),
-		)
 
-	def to_payload(self, audio_b64: str) -> dict:
-		return {
-			"audio": audio_b64,
-			"prompt": self.prompt,
-			"suppress_non_speech": self.suppress_non_speech,
-			"temperature": self.temperature,
-			"beam_size": self.beam_size,
-			"vad": self.vad
-		}
+		return cls(
+			language = hp.get("language", config.get("language", "en"))
+		)
 
 @dataclass
 class STTClientConfig:
-		# Executable location
-		backend_location: str = "./vendor/bin/whisper.cpp"
+	# Executable location
+	backend_location: str = "./vendor/bin/StreamingSTT"
 
-		# Connectivity
-		host: str = "127.0.0.1"
-		port: int = 8001
-		endpoint: str = "/inference"
+	# Connectivity
+	host: str = "127.0.0.1"
+	port: int = 8001
+	endpoint: str = "/v1/audio/transcriptions"
 
-		# Data
-		model: str = "UnnamedSTT.gguf"
-		vad: str = "UnnamedVAD.gguf"
+	# Models
+	model: str = ""
+	mmproj: str = ""
+	vad: str = ""
+	smart_turn: str = ""
 
-		log_dir: str = "./"
+	# Runtime
+	gpu_layers: int = 999
+	smart_turn_threads: int = 1
+	smart_turn_threshold: float = 0.5
+	smart_turn_silence_ms: int = 50
+	smart_turn_force_end_ms: int = 1500
+
+	log_dir: str = "./"
 
 class STTClient:
 	def __init__(self, config: STTClientConfig):
@@ -52,24 +50,58 @@ class STTClient:
 		self.session = requests.Session()
 
 		self.sample_rate = 16000
+		self.channels = 1
+		self.sample_width = 2
 
 		cmd = [
-			f"{config.backend_location}\\whisper-server",
-			"-m", config.model,
-			"-vm", config.vad,
-			"-fa",
-			"--port", str(config.port)
+			f"{config.backend_location}\\StreamingSTT",
+			"--model", str(config.model),
+			"--mmproj", str(config.mmproj),
+			"--vad", str(config.vad),
+			"--host", config.host,
+			"--port", str(config.port),
+			"--n-gpu-layers", str(config.gpu_layers)
 		]
-		# TODO does python have destructors?
+
+		if config.smart_turn:
+			cmd += [
+				"--smart-turn", str(config.smart_turn),
+				"--smart-turn-threads", str(config.smart_turn_threads),
+				"--smart-turn-threshold", str(config.smart_turn_threshold),
+				"--smart-turn-silence-ms", str(config.smart_turn_silence_ms),
+				"--smart-turn-force-end-ms", str(config.smart_turn_force_end_ms)
+			]
+
 		self.process = start_subprocess(cmd, config.log_dir)
+
 		print(f"STT server running at: {self.endpoint}")
 
 	def close(self):
-		self.process.terminate()
-		self.process.wait()
+		self.session.close()
 
-	def transcribe(self, hyperparameters: STTHyperparameters, audio_b64: str) -> str:
-		response = self.session.post(self.endpoint, json = hyperparameters.to_payload(audio_b64))
+		if self.process.poll() is None:
+			self.process.terminate()
+			self.process.wait()
+
+	def _pcm_to_wav(self, audio: bytes) -> bytes:
+		buffer = io.BytesIO()
+
+		with wave.open(buffer, "wb") as wav:
+			wav.setnchannels(self.channels)
+			wav.setsampwidth(self.sample_width)
+			wav.setframerate(self.sample_rate)
+			wav.writeframes(audio)
+
+		return buffer.getvalue()
+
+	def transcribe(self, hyperparameters: STTHyperparameters, audio: bytes) -> str:
+		if not audio:
+			return ""
+		wav = self._pcm_to_wav(audio)
+		response = self.session.post(
+			self.endpoint,
+			files = { "file": ("audio.wav", wav, "audio/wav") },
+			data = { "language": hyperparameters.language }
+		)
 		response.raise_for_status()
-
 		return response.json().get("text", "").strip()

@@ -31,6 +31,7 @@ class WebSocket:
 
 		self.registered_events: dict[str, tuple[Handler, type[BaseModel]]] = {}
 		self.validate_handler: Validator | None = None
+		self.binary_handler: Handler | None = None
 		self.disconnect_event_name: str = None
 
 		@self.ws.on("json")
@@ -62,6 +63,11 @@ class WebSocket:
 
 			await handler(websock, payload)
 
+		@self.ws.on("binary")
+		async def _on_binary(websock, data):
+			if self.binary_handler:
+				await self.binary_handler(websock, data)
+
 		@self.ws.on("disconnect")
 		async def _on_disconnect(websock, payload):
 			if self.disconnect_event_name and self.disconnect_event_name in self.registered_events:
@@ -79,6 +85,9 @@ class WebSocket:
 
 	def set_validator(self, validator: Validator | None):
 		self.validate_handler = validator
+
+	def set_binary_handler(self, callback: Handler | None):
+		self.binary_handler = callback
 
 	# Use one of the events as a disconnect event
 	def register_on_disconnect(self, event_name: str):

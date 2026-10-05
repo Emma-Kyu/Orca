@@ -1,5 +1,6 @@
 import re
 import asyncio
+import inspect
 import uuid
 
 from typing import Literal
@@ -126,41 +127,72 @@ class ClientMessageEvent(Event):
 
 	async def process(self, user_data):
 		msg = self.message
-		# validate
+
 		if not msg.is_valid():
 			await user_data.ws.ws.send_json(self.ws, {"event": "error", "reason": "Message is invalid. Message may be missing fields"})
 			return
 
-		metrics = Metrics()
-
-		# Decode the message
 		if msg.input_type == "audio":
-			with metrics.time("decode", Unit.MILLISECONDS):
-				msg.message_str = user_data.stt.transcribe(STTHyperparameters(), msg.message)
-		else:
-			msg.message_str = msg.message or ""
-
-		# Pre processing
-		if msg.input_type != "none":
-			msg.message_str = normalise(msg.message_str.strip())
-			msg.message_str = preprocess_transcription(msg.message_str)
-
-		# Nothing to reply to
-		if not msg.message_str and msg.input_type != "none":
+			await user_data.ws.ws.send_json(self.ws, {"event": "error", "reason": "Audio input must be sent as a binary audio packet."})
 			return
 
-		# Get the post processed form to send to context
-		post_processed = msg.post_process()
-		
-		if msg.input_type != "none":
-			user_data.context.push_user(post_processed)
+		metrics = Metrics()
+		msg.message_str = msg.message or ""
 
-		print(f"[{user_data.client_manager.get_client_name_from_id(msg.client_id)}] {post_processed if msg.input_type != 'none' else 'spontaneous generation'}")
+		await process_client_message(user_data, self.ws, msg, metrics)
 
-		if msg.output:
-			user_data.event_bus.push_event(GenerationEvent(metrics))
-		else:
-			user_data.context.push_assistant("<silence>")
+
+# Runs on a complete binary audio utterance from a client
+class ClientAudioMessageEvent(Event):
+	def __init__(self, ws, payload, audio: bytes):
+		self.ws = ws
+		self.audio = audio
+
+		payload = dict(payload)
+		payload["input_type"] = "audio"
+		payload["message"] = "<binary-audio>"
+		self.message = Message(payload)
+
+	async def process(self, user_data):
+		msg = self.message
+
+		if not msg.is_valid():
+			await user_data.ws.ws.send_json(self.ws, {"event": "error", "reason": "Audio message is invalid. Message may be missing fields"})
+			return
+
+		metrics = Metrics()
+
+		with metrics.time("decode", Unit.MILLISECONDS):
+			transcribe = user_data.stt.transcribe
+			hyperparameters = STTHyperparameters()
+
+			if inspect.iscoroutinefunction(transcribe):
+				msg.message_str = await transcribe(hyperparameters, self.audio)
+			else:
+				msg.message_str = await asyncio.to_thread(transcribe, hyperparameters, self.audio)
+
+		await process_client_message(user_data, self.ws, msg, metrics)
+
+
+async def process_client_message(user_data, ws, msg, metrics):
+	if msg.input_type != "none":
+		msg.message_str = normalise((msg.message_str or "").strip())
+		msg.message_str = preprocess_transcription(msg.message_str)
+
+	if not msg.message_str and msg.input_type != "none":
+		return
+
+	post_processed = msg.post_process()
+
+	if msg.input_type != "none":
+		user_data.context.push_user(post_processed)
+
+	print(f"[{user_data.client_manager.get_client_name_from_id(msg.client_id)}] {post_processed if msg.input_type != 'none' else 'spontaneous generation'}")
+
+	if msg.output:
+		user_data.event_bus.push_event(GenerationEvent(metrics))
+	else:
+		user_data.context.push_assistant("<silence>")
 
 # A function return event that needs to be processed
 class FunctionReturnEvent(Event):

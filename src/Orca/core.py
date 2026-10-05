@@ -16,6 +16,7 @@ from .utils.AIOApp import AIOApp, AIOAppConfig
 from .utils.Context import Context
 from .utils.EventBus import EventBus, EventBusConfig
 from .utils.WebSocket import WebSocket, WebSocketConfig
+from .utils.AudioPacket import decode_audio_packet
 
 from .utils.ClientManager import ClientManager
 from .utils.FunctionRegistry import FunctionRegistry
@@ -23,7 +24,7 @@ from .utils.FunctionRegistry import FunctionRegistry
 from .utils.BarrierTracker import BarrierTracker
 
 from .utils.Events import (
-	ClientConnectEvent, ClientDisconnectEvent, ClientMessageEvent, FunctionReturnEvent, RebuildPromptEvent,
+	ClientConnectEvent, ClientDisconnectEvent, ClientMessageEvent, ClientAudioMessageEvent, FunctionReturnEvent, RebuildPromptEvent,
 	Schema_ConnectEvent, Schema_DisconnectEvent, Schema_MessageEvent, Schema_FunctionResultEvent
 )
 
@@ -86,39 +87,39 @@ class Orca:
 		subprocess_log_dir = os.getenv("SUBPROCESS_LOG_DIR")
 		backend_path = Path(__file__).parent.parent
 
+		llm_config = self.config["chat"]
+		stt_config = self.config["stt"]
+		tts_config = self.config["tts"]
+
 		self.llm = LLMClient(LLMClientConfig(
 			backend_location=backend_path / os.getenv("LLAMA_BACKEND"),
 			host=host,
 			port=int(os.getenv("LLM_PORT")),
-			model=self.config["chat"]["model_path"],
+			model=llm_config["model_path"],
 			alias=self.config["name"],
-			context_length=self.config["chat"]["context_length"],
+			context_length=llm_config["context_length"],
 			log_dir=subprocess_log_dir
 		))
 
 		self.stt = STTClient(STTClientConfig(
-			backend_location=backend_path / os.getenv("WHISPER_BACKEND"),
-			host=host,
-			port=int(os.getenv("STT_PORT")),
-			model=self.config["stt"]["model_path"],
-			vad=self.config["stt"]["vad_path"],
-			log_dir=subprocess_log_dir
+			backend_location = backend_path / os.getenv("STT_BACKEND"),
+			host = host,
+			port = int(os.getenv("STT_PORT")),
+			model = stt_config["model_path"],
+			mmproj = stt_config["mmproj_path"],
+			vad = stt_config["vad_path"],
+			smart_turn = stt_config.get("smart_turn_path", ""),
+			log_dir = subprocess_log_dir
 		))
 		self.tts = TTSClient(TTSClientConfig(
-			model_path=self.config["tts"]["model_path"],
-			voice_pack=self.config["tts"]["voice_pack"],
-			pitch_shift=self.config["tts"]["pitch_shift"]
+			model_path=tts_config["model_path"],
+			voice_pack=tts_config["voice_pack"],
+			pitch_shift=tts_config["pitch_shift"]
 		))
 
-		self.http = AIOApp(AIOAppConfig(
-			host=host,
-			port=int(os.getenv("HTTP_PORT"))
-		))
+		self.http = AIOApp(AIOAppConfig(host=host, port=int(os.getenv("HTTP_PORT"))))
 
-		self.ws = WebSocket(WebSocketConfig(
-			host=host,
-			port=int(os.getenv("WEBSOCKET_PORT"))
-		))
+		self.ws = WebSocket(WebSocketConfig(host=host, port=int(os.getenv("WEBSOCKET_PORT"))))
 
 		async def _on_connect(ws, payload):
 			self.event_bus.push_event(ClientConnectEvent(ws, payload))
@@ -129,12 +130,33 @@ class Orca:
 		async def _on_function_result(ws, payload):
 			self.event_bus.push_event(FunctionReturnEvent(payload))
 
-		async def _on_open_input_stream(ws, payload):
-			pass
-		async def _on_close_input_stream(ws, payload):
-			pass
-		async def _on_input_stream_data(ws, payload):
-			pass
+		async def _on_binary(ws, data):
+			try:
+				payload, audio = decode_audio_packet(data)
+			except ValueError as exc:
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": str(exc) })
+				return
+
+			if payload.get("sample_rate") != 16000:
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": "Only 16000 Hz binary audio is currently supported." })
+				return
+
+			if payload.get("channels") != 1:
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": "Only mono binary audio is currently supported." })
+				return
+
+			if payload.get("format") != "pcm_s16le":
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": "Only pcm_s16le binary audio is currently supported." })
+				return
+
+			if not audio:
+				return
+
+			if len(audio) % 2 != 0:
+				await self.ws.ws.send_json(ws, { "event": "error", "reason": "PCM16 payload has an invalid byte length." })
+				return
+
+			self.event_bus.push_event(ClientAudioMessageEvent(ws, payload, audio))
 
 
 		self.ws.add_event("connect", _on_connect, Schema_ConnectEvent)
@@ -143,10 +165,7 @@ class Orca:
 		self.ws.add_event("function_result", _on_function_result, Schema_FunctionResultEvent)
 
 		self.ws.register_on_disconnect("disconnect")
-
-		# self.ws.add_event("open_input_stream", _on_open_input_stream, Schema_OpenInputStream)
-		# self.ws.add_event("close_input_stream", _on_close_input_stream, Schema_CloseInputStream)
-		# self.ws.add_event("input_stream_data", _on_input_stream_data, Schema_InputStreamData)
+		self.ws.set_binary_handler(_on_binary)
 
 		# Load scripts
 		self.script_manager.load_scripts()
