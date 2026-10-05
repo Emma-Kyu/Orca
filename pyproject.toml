@@ -13,7 +13,6 @@ dependencies = [
   "websockets",
   "pydantic",
   "numpy",
-  "kokoro @ git+https://github.com/Joshua-Usi/kokoro.git@main"
 ]
 
 [project.scripts]
